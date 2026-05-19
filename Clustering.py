@@ -9,18 +9,13 @@ from sklearn.metrics import silhouette_score
 df = pd.read_excel('env/Cuaca/Cuaca_Gabungan_Bersih.xlsx')
 kolom_numerik = ['TAVG', 'RH_AVG', 'RR', 'FF_AVG']
 
-# 2. AGREGASI — rata-rata per stasiun (1 baris = 1 stasiun)
-df_stasiun = df.groupby('STASIUN')[kolom_numerik].mean().round(2).reset_index()
-print("Data per stasiun:")
-print(df_stasiun)
-
-# 3. NORMALISASI
+# 2. NORMALISASI LANGSUNG DATA HARIAN (bukan agregasi)
 scaler = MinMaxScaler()
-data_scaled = scaler.fit_transform(df_stasiun[kolom_numerik])
+data_scaled = scaler.fit_transform(df[kolom_numerik])
 
-# 4. ELBOW — cari K optimal
+# 3. ELBOW — cari K optimal
 wcss = []
-K_range = range(2, len(df_stasiun))  # max K = jumlah stasiun - 1
+K_range = range(2, 11)
 
 for k in K_range:
     km = KMeans(n_clusters=k, random_state=42, n_init=10)
@@ -36,36 +31,41 @@ plt.grid(True)
 plt.savefig('elbow.png', dpi=150)
 plt.show()
 
-# 5. K-MEANS — ganti K sesuai hasil grafik Elbow
+# 4. K-MEANS
 K_OPTIMAL = 3  # ← ubah setelah lihat grafik
 
 km = KMeans(n_clusters=K_OPTIMAL, random_state=42, n_init=10)
-df_stasiun['Cluster'] = km.fit_predict(data_scaled)
+df['Cluster'] = km.fit_predict(data_scaled)
 
-# 6. EVALUASI — Silhouette Score
-skor = silhouette_score(data_scaled, df_stasiun['Cluster'])
+# 5. EVALUASI — Silhouette Score
+skor = silhouette_score(data_scaled, df['Cluster'])
 print(f"\nSilhouette Score: {skor:.4f}")
 print("(Mendekati 1 = bagus, mendekati 0 = jelek)")
 
-# 7. HASIL — stasiun masuk cluster mana
-print("\nHasil Clustering:")
-print(df_stasiun[['STASIUN', 'Cluster'] + kolom_numerik])
-
+# 6. KARAKTERISTIK TIAP CLUSTER
 print("\nRata-rata tiap cluster:")
-print(df_stasiun.groupby('Cluster')[kolom_numerik].mean().round(2))
+print(df.groupby('Cluster')[kolom_numerik].mean().round(2))
 
-# 8. VISUALISASI — scatter plot sederhana
+print("\nDistribusi cluster (% dari total data):")
+print(df['Cluster'].value_counts(normalize=True).mul(100).round(1))
+
+# 7. ANALISIS PER STASIUN — stasiun mana dominan di cluster mana
+print("\nDistribusi Cluster per Stasiun (%):")
+distribusi = df.groupby('STASIUN')['Cluster'].value_counts(normalize=True)
+distribusi = distribusi.mul(100).round(1).unstack(fill_value=0)
+distribusi.columns = [f'Cluster {c}' for c in distribusi.columns]
+print(distribusi)
+
+# 8. VISUALISASI — pola cuaca harian
 warna = ['red', 'green', 'blue', 'orange', 'purple']
 
 plt.figure(figsize=(8, 6))
 for i in range(K_OPTIMAL):
-    subset = df_stasiun[df_stasiun['Cluster'] == i]
+    subset = df[df['Cluster'] == i]
     plt.scatter(subset['TAVG'], subset['RH_AVG'],
-                c=warna[i], label=f'Cluster {i}', s=100)
-    for _, row in subset.iterrows():
-        plt.annotate(row['STASIUN'], (row['TAVG'], row['RH_AVG']), fontsize=8)
+                c=warna[i], label=f'Cluster {i}', s=20, alpha=0.5)
 
-plt.title('Hasil Clustering Stasiun (Suhu vs Kelembaban)')
+plt.title('Hasil Clustering Data Harian (Suhu vs Kelembaban)')
 plt.xlabel('TAVG (°C)')
 plt.ylabel('RH_AVG (%)')
 plt.legend()
@@ -73,6 +73,6 @@ plt.grid(True)
 plt.savefig('cluster.png', dpi=150)
 plt.show()
 
-# Menyimpan Hasil
-df_stasiun.to_excel('Hasil_Clustering.xlsx', index=False)
+# 9. SIMPAN HASIL
+df.to_excel('Hasil_Clustering.xlsx', index=False)
 print("\nSelesai! File disimpan: Hasil_Clustering.xlsx")
