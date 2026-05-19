@@ -1,78 +1,60 @@
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.preprocessing import MinMaxScaler
-from sklearn.cluster import KMeans
-from sklearn.metrics import silhouette_score
+import glob
+import os
 
-# 1. BACA DATA HASIL PREPARATION
-df = pd.read_excel('env/Cuaca/Cuaca_Gabungan_Bersih.xlsx')
+kolom = ['TANGGAL', 'TAVG', 'RH_AVG', 'RR', 'FF_AVG']
 kolom_numerik = ['TAVG', 'RH_AVG', 'RR', 'FF_AVG']
+nilai_error = [9999, 8888, 9998, -9999, -99, 99.9]
 
-# 2. NORMALISASI LANGSUNG DATA HARIAN (bukan agregasi)
-scaler = MinMaxScaler()
-data_scaled = scaler.fit_transform(df[kolom_numerik])
+# Ngebaca dan ngebangun data dari semua file Excel di folder
+folder = 'env/Cuaca/'
+semua_file = glob.glob(os.path.join(folder, '*.xlsx'))
+semua_file.sort()
 
-# 3. ELBOW — cari K optimal
-wcss = []
-K_range = range(2, 11)
+print(f"File ditemukan: {len(semua_file)} stasiun")
 
-for k in K_range:
-    km = KMeans(n_clusters=k, random_state=42, n_init=10)
-    km.fit(data_scaled)
-    wcss.append(km.inertia_)
+list_df = []
 
-plt.figure(figsize=(8, 5))
-plt.plot(K_range, wcss, marker='o')
-plt.title('Metode Elbow')
-plt.xlabel('Jumlah Cluster (K)')
-plt.ylabel('WCSS')
-plt.grid(True)
-plt.savefig('elbow.png', dpi=150)
-plt.show()
+for file in semua_file:
+    # Ambil nama stasiun dari nama file
+    nama_stasiun = os.path.basename(file).replace('.xlsx', '').replace('Stasiun_', '')
 
-# 4. K-MEANS
-K_OPTIMAL = 3  # ← ubah setelah lihat grafik
+    df = pd.read_excel(file, header=7)
+    df = df[kolom].copy()
 
-km = KMeans(n_clusters=K_OPTIMAL, random_state=42, n_init=10)
-df['Cluster'] = km.fit_predict(data_scaled)
+    # Tambahkan kolom STASIUN
+    df.insert(0, 'STASIUN', nama_stasiun)
 
-# 5. EVALUASI — Silhouette Score
-skor = silhouette_score(data_scaled, df['Cluster'])
-print(f"\nSilhouette Score: {skor:.4f}")
-print("(Mendekati 1 = bagus, mendekati 0 = jelek)")
+    list_df.append(df)
+    print(f" {nama_stasiun}: {len(df)} baris")
 
-# 6. KARAKTERISTIK TIAP CLUSTER
-print("\nRata-rata tiap cluster:")
-print(df.groupby('Cluster')[kolom_numerik].mean().round(2))
+# Gabungkan semua stasiun
+df_gabung = pd.concat(list_df, ignore_index=True)
+print(f"\nTotal gabungan: {len(df_gabung)} baris dari {len(semua_file)} stasiun")
 
-print("\nDistribusi cluster (% dari total data):")
-print(df['Cluster'].value_counts(normalize=True).mul(100).round(1))
+# 2. CLEANING — HANDLING ERROR VALUES
+df_gabung[kolom_numerik] = df_gabung[kolom_numerik].replace(nilai_error, np.nan)
 
-# 7. ANALISIS PER STASIUN — stasiun mana dominan di cluster mana
-print("\nDistribusi Cluster per Stasiun (%):")
-distribusi = df.groupby('STASIUN')['Cluster'].value_counts(normalize=True)
-distribusi = distribusi.mul(100).round(1).unstack(fill_value=0)
-distribusi.columns = [f'Cluster {c}' for c in distribusi.columns]
-print(distribusi)
+print("\nJumlah NaN per kolom setelah replace error:")
+print(df_gabung[kolom_numerik].isnull().sum())
 
-# 8. VISUALISASI — pola cuaca harian
-warna = ['red', 'green', 'blue', 'orange', 'purple']
+# Isi NaN dengan rata-rata PER STASIUN (lebih akurat)
+df_gabung[kolom_numerik] = df_gabung.groupby('STASIUN')[kolom_numerik].transform(
+    lambda x: x.fillna(x.mean())
+)
 
-plt.figure(figsize=(8, 6))
-for i in range(K_OPTIMAL):
-    subset = df[df['Cluster'] == i]
-    plt.scatter(subset['TAVG'], subset['RH_AVG'],
-                c=warna[i], label=f'Cluster {i}', s=20, alpha=0.5)
+# Isi sisa NaN (kalau satu kolom stasiun kosong semua) dengan rata-rata global
+df_gabung[kolom_numerik] = df_gabung[kolom_numerik].fillna(df_gabung[kolom_numerik].mean())
 
-plt.title('Hasil Clustering Data Harian (Suhu vs Kelembaban)')
-plt.xlabel('TAVG (°C)')
-plt.ylabel('RH_AVG (%)')
-plt.legend()
-plt.grid(True)
-plt.savefig('cluster.png', dpi=150)
-plt.show()
+# 3. FORMAT TANGGAL
+df_gabung['TANGGAL'] = pd.to_datetime(df_gabung['TANGGAL'], dayfirst=True).dt.date
 
-# 9. SIMPAN HASIL
-df.to_excel('Hasil_Clustering.xlsx', index=False)
-print("\nSelesai! File disimpan: Hasil_Clustering.xlsx")
+# Menyimpan hasil gabungan dan bersih ke file baru
+output_path = 'env/Cuaca/Cuaca_Gabungan_Bersih.xlsx'
+df_gabung.to_excel(output_path, index=False)
+
+print(f"\n✅ File berhasil disimpan: {output_path}")
+print(f"\nPreview data gabungan:")
+print(df_gabung.head(10))
+print(f"\nDaftar stasiun: {df_gabung['STASIUN'].unique().tolist()}")
